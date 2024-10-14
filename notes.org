@@ -1,0 +1,304 @@
+#+title: LinkedIn Web Security: OAuth and OpenID Connect Notes
+#+author: Marc Alvarez
+#+date: <2024-10-11 Fri>
+
+* Introduction
+** What you should know
+- Interchangable terminology in the domain space:
+  - "OAuth" when used throughout will mean "OAuth 2.0"
+  - "OIDC" means "OpenID Connect"
+- Have an HTTP client available
+- Have an OAuth server available, a good one is the Google-provided OAuth Playground (https://developers.google.com/oauthplayground/) and the OpenID Foundation-provided OpenID Connect Playground  (https://openidconnect.net/).
+
+** What is OAuth 2.0
+- OAuth is a framework for a user to delegate access from one system to another, authorizing one system acting on behalf of you to that other system
+- Authored in 2012, written as a framework intentionally so as to describe the loose operating agreement and boundaries of interaction between relevant components
+- Benefit of this can be to share data, or even just to streamline experience overall
+- Authentication (AuthN) vs Authoization (AuthZ):
+  - AuthN -> "who are you?"
+  - AuthZ -> "what can you do?"
+- On its own, OAuth is an authorization framework, meaning lots are purposefully left undefined or open for interpretation and extension by consumers
+- The extension model allows us to have things like OpenID Connect - a special case of OAuth that gives us  a user's profile information
+
+*** Extending OAuth:
+  - OpenID Connect:
+    - Providesa standard way to request and share profile data
+    - Gives us "Sign in with..."
+    - Depends on JSON Web Tokens (JWTs)
+  - JSON Web Tokens:
+    - RFC 7519
+    - OAuth doesn't require JWTs but common in the space
+    - JWTs are encoded, not encrypted
+    - JSON Web Encryption (JWE)
+    - Includes iss (issuer), iat (issued at), sub (subject) aud (audience) and exp (expiration)
+  - RFC 7662 Token Introspection:
+    - Examines a token to describe its contents
+    - Useful for opaque tokens
+    - Describes if token is active
+    - Mandatory if using token revocation
+  - RFC 7009 Token Revocation:
+    - Revokes (cancels) a token via API
+    - Technically optional, but in practice a requirement
+  - RFC 8636 Auth Code with PKCE:
+    - Useful when protecting client-side flows (mobile devices, SPAs)
+    - Replaces Implicit grant type
+  - RFC 8693 Token Exchange:
+    - Approach for trading tokens on behalf of another user or service ("delegation")
+    - Useful when implementing "impersonation"
+  - RFC 8414 Authorization Server Metadata:
+    - Extension gives an endpoint to query to see which extensions our OAuth server supports
+
+*** Focus on OpenID Connect:
+  - Unlike OAuth, OpenID Connect extension is: rigidly defined, strictly structured JWTs
+  - But like OAuth has numerous extensions
+
+    +-----------------------------------------+-------------------------------------------+
+    |             OAuth 2.0                   |            OpenID Connect                 |
+    +-----------------------------------------+-------------------------------------------+
+    | Access and refresh tokens               | +ID tokens                                |
+    +-----------------------------------------+-------------------------------------------+
+    | Authorize and token endpoints           | +UserInfo endpoint                        |
+    +-----------------------------------------+----------------------------------- -------+
+    | AuthZ Code, Implicit, Resource Owner    | (Not Client Creds though)                 |
+    | Password, and Client Creds              |                                           |
+    +-----------------------------------------+-------------------------------------------+
+
+  - ID Token: we can bootstrap a new app easily by pulling the profile information from the decoded token
+  - OIDC replaces SAML for SSO
+
+** Foundational Concepts
+*** Seven key terms to knowing OAuth:
+  - Resource owner - that's you (whoever is authenticating)
+  - Resource server - what you're granting access to
+  - Grant type - how the application is asking for access
+  - Scope - what access the application is requesting
+  - Authorization server - who the application is asking for access (the "brains" of the process)
+  - Token - how the application gets that access
+  - Claims - the content or information in the token
+
+*** Tour of OAuth endpoints:
+  - /authorize:
+    - endpoint that the end user (resource owner) interacts with to grant permission for the app to access the resource
+    - could return an authorization code or an access token
+  - /token:
+    - the endpoint that the application uses to trade an authorization code or refresh token for an access token
+  - From here on out... every other endpoint is optional:
+    - For OpenID Connect Core:
+      - /userinfo:
+        - endpoint that apps use to retrieve profile info about an authenticated user
+        - returns a spec-defined set of fields depending on permissions (scope) requested
+      - /.well-known/oauth-authorization-server:
+        - used to retrive the configuration information for the auth server
+        - returns spec-defined fields
+      - /introspect:
+        - endpoint that applications use to learn more about a token:
+          - whether it is active or not (not revoked, within expiration)
+          - additional info such as exp time, scopes included, etc. (optional)
+      - /revoke:
+        - endpoint that apps use to deactivate (invalidate) a token
+        - valid for access or refresh tokens
+
+*** Grant types:
+  - Are you authorizing on behalf of a user?
+  - Does the system in question have a web browser available?
+  - Is the application entirely server side, or does it have a client-side component?
+
+  -                     For a user?
+                        /         \
+                    Yes             No
+            Browser Available?      Client Credential Grant Type
+              /          \
+            Yes          No
+   Server-side only?      Device Grant Type
+      /         \
+    Yes          No
+Authorization     Implicit Grant Type (Formerly)
+Code Flow             \
+(Occassionally:        Now
+Resource Owner         Authorization Code Flow with PKCE
+Password Flow)
+
+
+*** OAuth Scopes:
+- A scope is simply a set of permissions you can request
+- There isn't a standard naming format, only real requirement is that they're unique strings within a given OAuth provider
+- Because there is no standard for naming, documentation is essential
+- Look to Github for how you might ... not want to implement scopes, but check out Google for a way ... you might want to implement them
+- Be clear and predictable in your own naming!
+
+*** Using the OAuth playground
+- https://developers.google.com/oauthplayground/
+
+** OAuth Tokens
+*** OAuth 2.0 Tokens
+- Access tokens: grants access to things, should expire quickly "minutes to hours"
+- Refresh tokens: only for use with auth server, should last longer, "hours to days or even weeks"
+- ID tokens: OpenID Connect Core, radically different than all other tokens - security token that contains claims about the authentication of an end user by an authorization server
+*** Validating JWTs
+- Refresh tokens are never JWTs
+- Access tokens are often JWTs
+- ID token must be a JWT
+- Regardless of where you find them, you must validate them
+- Look for the signing keys provided by the documentation for your OAuth provider
+- You generally need the data, which was signed, the algorithm used that was the header, and then combine with the public key from sender
+- Check out jwt.io for more info + playground to explore JWTs in more detail
+*** Handling tokens safely and securely
+- First, remember that access and refresh tokens are credentials - protect them and secure them just like any other secret in our apps
+- Never store them in client side code, only in secure cookies used over HTTPS
+- DO NOT store sensitive info in ID tokens!
+- Better approach is using a token at resource server to retrieve that sensitive information directly
+- Choose token lifetimes specific to the use case and risks involved if token is misused and abused
+- Core OAuth doesn't have revokation by default, and not all OAuth providers support this
+- Refresh tokens will allow retrieval of a new access token
+
+** Grant Type: Authorization Code
+*** Overview - Authorization Code Flow
+
+#+CAPTION: This is a visual overview of the Authorization Code Flow
+#+NAME: fig:authorization_code_flow_diagram
+#+ATTR_HTML: width="2400"
+#+ATTR_ORG: :width 2400
+[[./images/authorization_code_flow.png]]
+
+- Do not use this flow in a mobile app, single-page app or on any physical device where you may have to embed a secret
+
+*** Overview - Authorization PKCE Flow
+
+#+CAPTION: This is a visual overview of the PKCE Authorization Code Flow
+#+NAME: fig:authorization_pkce_code_flow_diagram
+#+ATTR_HTML: width="2400"
+#+ATTR_ORG: :width 2400
+[[./images/authorization_pkce_code_flow.png]]
+
+- Use when you have a user, when a browser is available, and when the app has a client-side component
+- If you ever see Implicit grant type referenced in docs, you want to use PKCE (it's the modern, updated equivalent flow)
+- Consider appauth.io for PKCE (iOS, Android and JS libs available)
+
+*** Security Considerations
+- Authorization + Authorization with PKCE are easiest to secure by far
+- Always use SSL/TLS, obviously
+- Protect the authorization code
+- Be aware of the user's session
+- Protect your redirect_uri
+- MUST validate your access token
+
+** Grant Type: Resource Owner Password Flow
+*** Overview - Resource Owner Password Flow
+
+#+CAPTION: This is a visual overview of the Resource Owner Password Flow
+#+NAME: fig:resource_owner_password_flow_diagram
+#+ATTR_HTML: width="2400"
+#+ATTR_ORG: :width 2400
+[[./images/resource_owner_password_flow.png]]
+
+- Application captures credentials, uses them on behalf of the user and sends to target application
+- Risk of account compromising actions - this grant type defeats the core premise of OAuth
+- If you think this is the right grant type to use, 99.9% of the time you're wrong
+- You're basically putting your private info in the hands of an arbitrary 3rd party
+- For almost all cases, it's irresponsible to use this grant type
+
+**** So when is it the right grant type to use?
+- It's the last option, and has a narrow use case when talking about updating legacy systems, bringing them into better security practices
+- In this case, this grant type is used a bridge between legacy systems and new and better security in the updated system being migrated to
+
+*** Security Considerations
+- Use TLS
+- The client secret is credential - protect it
+- Validate the access token
+- Protect the access token
+- The actual risk is bigger than all this though:
+  - Your user is giving their credentials to the application
+  - Do we want to train our users to put their credentials anywhere?
+  - Do we trust the application and *all* the developers who have ever worked on that system?
+- Scopes don't limit access here! The only way to remove access you've granted to a system is by resetting your password
+
+** Grant Type: Client Credentials
+*** Overview - Client Credentials Flow
+- This grant type is the easiest, it does not involve a user - it's never acting on behalf of a user, but instead acting on its own (a system) behalf
+
+  #+CAPTION: This is a visual overview of the Client Credentials Flow
+  #+NAME: fig:client_credentials_flow_diagram
+  #+ATTR_HTML: width="2400"
+  #+ATTR_ORG: :width 2400
+  [[./images/client_credentials_flow.png]]
+
+- No user credentials involved, the client ID and client seeker are the application's credentials
+- Authorization of microservices will often leverage this approach
+- It is for back-end services or microservices only (because mobile or front end apps cannot safely/reliably keep secrets on our behalf)
+
+**** Benefits of OAuth over API Keys
+- Simplifies with consistent interfaces
+- Credential rotation, scopes, and better tooling
+- Fewer components and implementations overall
+
+*** Security Considerations
+- Always use SSL/TLS
+- Users won't and can't see this flow (which is good for security)
+- Log and monitor the system
+- Validate your tokens
+- Ensure you're using it where it's appropriate - but don't where it's not appropriate (e.g., don't use on IoT devices, etc)
+
+** Grant Type: Device Code Grant Type
+*** Overview - Device Code Grant Type
+- An extension of OAuth via RFC 8628
+- This grant type is specifically for anything with an internet connection that lacks a browser for handling HTTP redirects or is generally input constrained (e.g., not easy ot even possible to input passwords)
+- Stpes broken down: (1) The user identifies that they want to authenticate, (2) the device requests access to the authorization server and identifies itself with a device ID, (3) the auth server generates a device code, an end user code, and a verification URI, (4) the device presents that URI to the end user for them to visit (could be a URL, a QR code, etc), (5) when the user visits the URI, it goes to the authorization server and they authenticate, (6) after authentication, the user presents their end user code ot the auth server and now their session is logically connected from their login to the device's original request (often done via URL params)
+- During the steps above, the client device is typically polling the authorization server for the access token, then the client device can use the access token like any other app
+
+#+CAPTION: This is a visual overview of the Device Code Grant Flow
+#+NAME: fig:device_code_grant_flow_diagram
+#+ATTR_HTML: width="2400"
+#+ATTR_ORG: :width 2400
+[[./images/device_code_flow.png]]
+
+*** Security Considerations
+- Always use SSL/TLS
+- Validate your tokens
+- User Code:
+  - Keep it short, but note this is a balance, as it could be compromised by a brute force attack
+  - To mitigate, look at passing the code via URL or in a QR code - doing this can allow us to use a longer code
+  - On the authorization server side, we can implement rate limiting to mitigate brute force attacks
+- Don't implicitly trust devices
+- Get creative in your "presentation" the URL to the user, not necessarily displaying it (which given environmental factors could increase risk of compromise)
+
+** Using an OAuth Architecture
+*** Recommended practices
+- Always use SSL/TLS (a hard requirement)
+- Resource Server:
+  - At this deepest level, the resource server should validate every access token it receives and respect its expiration time
+  - The balance is that if doing local validation, you won't know if the authorization server has revoked it - but if you only validate using a request to the authorization server, you introduce latency into the request. For high-security use cases, like banking or healthcare, you should check the authorization server more often.
+- API Gateway:
+  - If you can validate and perform authorization enforcement here, you can look to reject invalid tokens right at the start of the architecture
+- Client Application:
+  - Single most important and hardest thing to secure as it's user facing
+  - Two essential things to do: choose the right grant type and secure your tokens, for grant type refer to the decision tree (see diagram in this doc) and with regard to the tokens, whenever possible don't display them to an end user and don't store them in logging or storage that the end user or a compromised system can access
+
+** State of the Industry
+*** OAuth extensions
+- When presented with "do you support OAuth", now you should have the context to realize that this is a nuanced question and parties on either end of this question may be referring to a different suite of core + extended capabilities
+- A suite of RFCs to consider would be:
+  - RFC 6749
+  - RFC 7519
+  - RFC 7636
+  - RFC 8628
+  - RFC 7516
+  - RFC 7662
+  - RFC 7009
+  - RFC 7636
+  - RFC 8628
+  - RFC 7591/7592
+  - RFC 8414
+- Supporting this suite of RFCs would be a robust set of extensions covering the vast majority of use cases
+
+*** Industry-specific OAuth extensions
+- Healthcare:
+  - SMART on FHIR: designed to integrate with electronic health records or patient portals
+  - HEART: sharing specific data, and managing access to that data on behalf of others like your kids
+- Finance:
+  - Open Banking: banking info should be easily but securely accessible via APIs, broken out into phases where eventually all financial institutions will abide by the standards/laws
+
+** Conclusion
+*** Resources
+- 'OAuth 2.0 Simplified' by Aaron Parecki (contributor to OAuth 2.1 effort)
+- oauth.com
+- https://www.oauth.com/oauth2-servers/map-oauth-2-0-specs/
